@@ -1,20 +1,21 @@
-# Multi-stage build für kleinen Container
-FROM python:3.11-slim as builder
+# Multi-stage build fuer kleinen Container
+FROM --platform=$BUILDPLATFORM python:3.11-slim AS builder
 
 WORKDIR /app
 
-# Install dependencies minimal
-RUN apt-get update && apt-get install -y --no-install-recommends \
-    build-essential \
-    && rm -rf /var/lib/apt/lists/*
+# Build deps are pure Python; force MarkupSafe without C extension
+# so copied site packages stay architecture-neutral.
+ENV PIP_NO_CACHE_DIR=1 \
+    PIP_DISABLE_PIP_VERSION_CHECK=1 \
+    MARKUPSAFE_NO_SPEEDUPS=1
 
-COPY pyproject.toml .
+COPY pyproject.toml README.md main.py ./
 
 # Install Python dependencies
-RUN pip install --no-cache-dir --user -e .
+RUN pip install --user .
 
 # Final stage
-FROM python:3.11-slim
+FROM python:3.11-slim AS runtime
 
 WORKDIR /app
 
