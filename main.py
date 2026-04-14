@@ -37,6 +37,12 @@ def clean_event(event):
 
     # Remove leading one-letter markers like "Z Zenturienbetreuung" -> "Zenturienbetreuung"
     cleaned_summary = re.sub(r'^[A-Z]\s+(?=\S)', '', cleaned_summary)
+
+    # If description contains an explicit online note line, mark title as online.
+    has_online_note = re.search(r'^\s*Anmerkung:\s*.*\bonline\b.*$', description, flags=re.IGNORECASE | re.MULTILINE)
+    if has_online_note and not re.search(r'\bonline\b', cleaned_summary, flags=re.IGNORECASE):
+        cleaned_summary = f"{cleaned_summary} (online)"
+
     event['summary'] = cleaned_summary
 
     return event
