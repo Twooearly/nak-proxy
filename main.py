@@ -1,6 +1,7 @@
 from flask import Flask, Response
 import requests
 import os
+import re
 from icalendar import Calendar, Event
 
 app = Flask(__name__)
@@ -30,9 +31,13 @@ def clean_event(event):
         summary = summary.split(',', 1)[0].strip()
     parts = summary.split(' ', 2)
     if len(parts) >= 3:
-        event['summary'] = parts[2].strip()
+        cleaned_summary = parts[2].strip()
     else:
-        event['summary'] = summary.strip()
+        cleaned_summary = summary.strip()
+
+    # Remove leading one-letter markers like "Z Zenturienbetreuung" -> "Zenturienbetreuung"
+    cleaned_summary = re.sub(r'^[A-Z]\s+(?=\S)', '', cleaned_summary)
+    event['summary'] = cleaned_summary
 
     return event
 
