@@ -5,7 +5,7 @@ import re
 from icalendar import Calendar, Event
 
 app = Flask(__name__)
-STUNDENPLAN_URL = "https://cis.nordakademie.de/fileadmin/Infos/Stundenplaene/A25a_2.ics"
+STUNDENPLAN_URL = "https://cis.nordakademie.de/fileadmin/Infos/Stundenplaene/A25a_3.ics"
 
 # --- HELFER FUNKTION ---
 def clean_event(event):
@@ -16,12 +16,12 @@ def clean_event(event):
     summary = str(event.get('summary', ''))
     description = str(event.get('description', ''))
 
-    # if "Französisch" in summary or "Spanisch" in summary:
-    #     return None
+    if "Spanisch" in summary:
+        return None
 
     # andere Englischkurse filtern
-    if "Pirie" in description or "Bulloch" in description:
-        return None
+    # if "Pirie" in description or "Bulloch" in description:
+    #     return None
     
     # # zweite Laborgruppe
     # if "Gruppe 2" in description:
