@@ -4,10 +4,8 @@ services:
     ports:
       - "8000:8000"
     environment:
-      - FLASK_ENV=production
-      - PORT=8000
-      - ZENTURIE=A25a
       - ARCHIVE_PATH=/data/archive.db
+      # optional: POLL_MINUTEN=30, DISCOVERY_STUNDEN=24, ZUSATZ_ZENTURIEN=A26a,W26a
     volumes:
       - calendar-data:/data
     restart: unless-stopped

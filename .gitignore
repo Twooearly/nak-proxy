@@ -10,18 +10,18 @@ __pycache__/
 *$py.class
 *.so
 .Python
-build/
-develop-eggs/
-dist/
-downloads/
-eggs/
+/build/
+/develop-eggs/
+/dist/
+/downloads/
+/eggs/
 .eggs/
-lib/
-lib64/
-parts/
-sdist/
-var/
-wheels/
+/lib/
+/lib64/
+/parts/
+/sdist/
+/var/
+/wheels/
 pip-wheel-metadata/
 share/python-wheels/
 *.egg-info/
@@ -47,9 +47,6 @@ htmlcov/
 .env.local
 .env.*.local
 
-# Build files
-.dockerignore
-
 # Preview/test files
 *.ics
 
@@ -58,3 +55,11 @@ htmlcov/
 
 # SQLite-Archiv (lokal)
 archive.db*
+
+# Frontend
+frontend/node_modules/
+frontend/build/
+frontend/.svelte-kit/
+
+# Poller-Lock
+.poller.lock

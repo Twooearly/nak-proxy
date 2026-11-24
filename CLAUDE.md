@@ -4,35 +4,46 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Overview
 
-A small Flask app that serves the Nordakademie timetable for one Zenturie as a cleaned-up iCalendar feed at `/stundenplan.ics`. Titles are shortened, some events are filtered out, and past events are kept in a SQLite archive.
+A public site where Nordakademie students pick Studiengang, Jahrgang and Zenturie, select modules, and get an iCalendar subscription URL. The filter lives entirely in the URL (`/z/A25a.ics?ohne=A205,spanisch-b1&gruppe=W213.2`); the frontend only builds that URL. Past events are kept in a SQLite archive.
 
-Code comments, README, log and CLI output are in German. Keep new user-facing strings and comments in German too.
+Code comments, README, log, CLI output and UI texts are in German. Keep new user-facing strings and comments in German too.
 
 ## Commands
 
 ```bash
-uv sync && uv run main.py              # dev server on :5000 (FLASK_ENV=dev enables debug)
-docker compose up --build              # gunicorn on :8000, archive at /data/archive.db
-python import_ics.py --dry-run <file-or-dir>   # import old .ics files into the archive (--db, --overwrite, --include-future)
+uv sync && uv run main.py                      # backend on :5000 (FLASK_ENV=dev enables debug, POLLER=0 disables polling)
+cd frontend && npm run dev                     # frontend on :5173, proxies /api and /z to :5000
+cd frontend && npm run check && npm run build  # type-check, static build into frontend/build (served by Flask)
+docker compose up --build                      # gunicorn on :8000, archive at /data/archive.db
+uv run import_ics.py --zenturie A25a --dry-run <file-or-dir>   # backfill archive (--db, --overwrite, --include-future)
+uv run pytest                                  # backend tests (offline, temp DB per test)
 ```
 
-There are no tests, linter or formatter configured. To check changes, run the app and request the feed with `curl localhost:5000/stundenplan.ics`.
+Tests live in `tests/` (pytest, fully offline). `conftest.py` provides the `db` fixture (fresh SQLite per test, caches cleared) and `make_event()`, which builds events in the NAK sked.de format. Upstream HTTP is faked via `FakeSession` in `test_upstream.py`. Add or adjust tests with every behaviour change, especially in `store.sync_source` (archive and cancellation logic). There is no linter. Local Docker builds need buildx (`docker buildx build --load -t nak-proxy .`).
 
-CI (`.github/workflows/docker-image.yml`) only builds and pushes a multi-arch Docker image (amd64/arm64/armv7) to GHCR on every push to `main` and on `v*` tags.
+CI (`.github/workflows/ci.yml`) runs `test-backend` (pytest on Python 3.13) and `test-frontend` (`npm run check` + build) on PRs and on pushes to `main`/tags. The `docker` job (multi-arch build + push to GHCR) needs both and runs only for `main`, `v*` tags and manual dispatch, so red tests never reach the server.
 
 ## Architecture
 
-- **`main.py`** creates the Flask `app` (gunicorn entry point `main:app`).
-  - The upstream URL is computed, not configured: `{STUNDENPLAN_BASE}/{ZENTURIE}_{semester}.ics`, where semester = `2*(year-START_JAHR) + (1 if month >= 7)`. `fetch_upstream()` tries the computed semester first, then `+1`, then `-1`, to cover the changeover between semesters. Upstream is decoded as windows-1252.
-  - `clean_event()` contains the filtering and title rules (drop "Spanisch", cut the course code prefix, add "(online)" based on the `Anmerkung:` line). It returns `None` to drop an event. `import_ics.py` reuses it.
-  - If no upstream URL answers, the endpoint still returns a feed made only from the archive.
-- **`archive.py`**: `merge_with_archive()` upserts all current events by UID into SQLite. Archived events missing upstream are kept if they are in the past and deleted if they are in the future, because a missing future event means it was cancelled. `dtstart` is stored as a UTC ISO string so it can be compared as text. The schema is created on every connection.
-- **`import_ics.py`**: CLI that backfills the archive from old `.ics` files. Raw NAK exports (detected by `is_raw_nak()`) go through `clean_event()`; other events are imported unchanged. It never deletes anything.
+- **Requests never hit upstream.** `poller.py` runs one background thread (guarded by an `flock` on `.poller.lock` next to the DB). Daily it runs `upstream.discover()` (HEAD probes over letters A–Z, the last 5 Jahrgänge, suffixes a, b, … until the first miss). Every 30 min it runs `upstream.fetch_zenturie()` for every known Zenturie.
+- **`upstream.py`**: The URL is `{BASE}/{Zenturie}_{semester}.ics`, semester = `2*(year-start) + (1 if month >= 7)`. Only the current semester file is online, so all of sem-1/sem/sem+1 are fetched with `If-Modified-Since`. Upstream is **UTF-8** (the old proxy wrongly decoded windows-1252). The Studiengang comes from `X-WR-CALNAME`, and the cancellation window from `X-SKED-SYNC-DTSTART/-DTEND`.
+- **`parse.py`**: All rules read the `Veranstaltung:` / `Anmerkung:` / `Status:` description lines:
+  - `module_key()`: course code (`A205`) or a slug (`spanisch-b1`).
+  - `gruppe()`: Laborgruppe.
+  - `display_title()`.
+  Titles are computed at render time, so rule changes apply to archived events too.
+- **`store.py`**: Tables `zenturien` (with `version`, bumped on every change; used as cache key/ETag), `quellen` (per upstream URL), and `events` (PK `zenturie, uid`; raw event without DTSTAMP). `sync_source()` upserts, then deletes only *future* events missing from the file *within its sync window*, and never deletes on an empty file. `init()` migrates the old single-Zenturie table once (renamed to `events_legacy_migriert`) and skips non-NAK events.
+- **`render.py`**: `lru_cache` over `(zenturie, version, ohne, gruppen)`.
+- **`main.py`**: Routes, input validation (Zenturie regex + must exist in DB), legacy `/stundenplan.ics` (A25a without `spanisch*`), serving the static frontend.
+- **`frontend/`**: SvelteKit 3 (adapter-static, runes, CSP hashes), shadcn-svelte (`vega` style) + Tailwind 4. Imports use `#lib/...` with explicit `.js`/`index.js` paths. The selection is mirrored into the URL hash (`#/z/A25a.ics?ohne=…`).
 
 ## Gotchas
 
-- When adding a module, add it to `py-modules` in `pyproject.toml` and to both `COPY` lines in the `Dockerfile`.
-- Gunicorn runs 2 workers, so SQLite runs in WAL mode for concurrent access.
-- The compose volume has the fixed name `calendar-proxy_calendar-data` so the archive survives renaming the project directory. Do not change it.
+- When adding a Python module, add it to `py-modules` in `pyproject.toml` and to both `COPY` lines in the `Dockerfile`.
+- Gunicorn runs **1 worker with 8 threads** so there is exactly one poller; SQLite runs in WAL mode.
+- Started as root, the entrypoint chowns `/data` to UID 1000 and drops root. With `user:` set in compose it skips that and runs directly as that user; `/data` must then be writable by it (SQLite creates `-wal`/`-shm` files next to the DB).
+- The local `compose.yaml` uses the named volume `calendar-proxy_calendar-data`. A deployment may use a bind mount instead.
+- `/stundenplan.ics` must keep working; existing subscriptions use it.
+- Feeds are public: never import non-NAK events into the archive.
 - `*.ics` is gitignored; do not commit sample feeds.
-- `.python-version` is 3.14, but the Docker image uses 3.11.
+- Docker uses Python 3.13 and Node 26 (the lockfile is from npm 11). `.python-version` is 3.14.

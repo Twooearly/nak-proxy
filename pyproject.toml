@@ -1,9 +1,9 @@
 [project]
 name = "nak-proxy"
 version = "0.1.0"
-description = "Flask proxy for the Nordakademie timetable"
+description = "Öffentlicher Nordakademie-Stundenplan als filterbares Kalender-Abo"
 readme = "README.md"
-requires-python = ">=3.10"
+requires-python = ">=3.11"
 dependencies = [
     "flask>=3.1.2",
     "icalendar>=7.0.0",
@@ -16,4 +16,13 @@ requires = ["setuptools>=61"]
 build-backend = "setuptools.build_meta"
 
 [tool.setuptools]
-py-modules = ["main", "archive", "import_ics"]
+py-modules = ["main", "parse", "store", "upstream", "poller", "render", "import_ics"]
+
+[dependency-groups]
+dev = [
+    "pytest>=9.2.0",
+]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["."]

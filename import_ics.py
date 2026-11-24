@@ -1,52 +1,31 @@
 #!/usr/bin/env python3
-"""Importiert alte .ics-Dateien ins Archiv.
+"""Importiert alte .ics-Dateien einer Zenturie ins Archiv.
 
-Roh-Exporte der NAK (sked.de) werden durch clean_event() geschickt, bereits vom Proxy bereinigte
-Dateien und fremde Kalender (z.B. Bahn) werden unverändert übernommen. Es wird nie etwas gelöscht;
-bestehende Archiv-Einträge bleiben unangetastet (außer mit --overwrite).
+Übernommen werden nur echte NAK-Termine (sked.de, mit "Veranstaltung:"-Zeile), egal ob roh oder
+schon vom alten Proxy bereinigt. Fremde Kalender werden übersprungen, weil der Feed öffentlich ist.
+Es wird nie etwas gelöscht; bestehende Archiv-Einträge bleiben unangetastet (außer mit --overwrite).
 
 Beispiele:
-  python import_ics.py --dry-run ~/Downloads/stundenplan.ics
-  python import_ics.py ~/alte-kalender/            # Ordner, rekursiv
-  docker compose run --rm -v "$PWD/alt:/in:ro" calendar-proxy python import_ics.py /in
+  python import_ics.py --zenturie A25a --dry-run ~/Downloads/stundenplan.ics
+  python import_ics.py --zenturie A25a ~/alte-kalender/            # Ordner, rekursiv
+  docker compose run --rm -v "$PWD/alt:/in:ro" nak-proxy python import_ics.py --zenturie A25a /in
 """
 import argparse
-import hashlib
-import re
 import sys
 from datetime import datetime, timezone
 from pathlib import Path
 
-from icalendar import Calendar
-
-import archive
-from main import clean_event
+import parse
+import store
 
 
 def read_calendar(path):
-    data = path.read_bytes()
-    for enc in ("utf-8-sig", "windows-1252"):
-        try:
-            return Calendar.from_ical(data.decode(enc).encode("utf-8"))
-        except UnicodeDecodeError:
-            continue
-    raise ValueError("Kodierung nicht lesbar")
-
-
-def is_raw_nak(event):
-    """Roh-NAK-Event: Summary entspricht noch der 'Veranstaltung:'-Zeile der Beschreibung."""
-    m = re.search(r"^Veranstaltung:\s*(.+?)\s*$", str(event.get("description", "")), re.MULTILINE)
-    if not m:
-        return False
-    first = lambda t: t.split(",", 1)[0].strip()
-    return first(str(event.get("summary", ""))) == first(m.group(1))
-
-
-def ensure_uid(event):
-    if event.get("uid"):
-        return
-    key = f"{event.get('summary','')}|{event.get('dtstart').to_ical() if event.get('dtstart') else ''}"
-    event.add("uid", "import-" + hashlib.sha1(key.encode()).hexdigest()[:16])
+    cal = parse.decode_ics(path.read_bytes())
+    for ev in cal.walk("VEVENT"):
+        for key in ("summary", "description", "location"):
+            if key in ev:
+                ev[key] = type(ev[key])(parse.repair_mojibake(str(ev[key])))
+    return cal
 
 
 def collect_files(paths):
@@ -65,17 +44,21 @@ def collect_files(paths):
 def main_cli():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("paths", nargs="+", help=".ics-Dateien oder Ordner")
+    ap.add_argument("--zenturie", required=True, help="Zenturie, z.B. A25a")
     ap.add_argument("--dry-run", action="store_true", help="nur anzeigen, nichts schreiben")
     ap.add_argument("--overwrite", action="store_true", help="bestehende Archiv-Einträge ersetzen")
-    ap.add_argument("--include-future", action="store_true", help="auch zukünftige Termine importieren (werden vom Proxy bei Nichtvorkommen upstream wieder entfernt)")
+    ap.add_argument("--include-future", action="store_true",
+                    help="auch zukünftige Termine importieren (werden vom Poller bei Nichtvorkommen upstream wieder entfernt)")
     ap.add_argument("--db", help="Archiv-Pfad (Default: ARCHIVE_PATH bzw. archive.db)")
     args = ap.parse_args()
+    if not store.ZENTURIE_RE.match(args.zenturie):
+        ap.error("Zenturie muss die Form A25a haben")
     if args.db:
-        archive.ARCHIVE_PATH = args.db
+        store.ARCHIVE_PATH = args.db
 
     now = datetime.now(timezone.utc).isoformat()
     seen, to_import = set(), []
-    stats = dict(raw=0, as_is=0, filtered=0, future=0, dup=0, broken=0)
+    stats = dict(nak=0, fremd=0, future=0, dup=0, broken=0)
 
     for f in collect_files(args.paths):
         try:
@@ -86,18 +69,13 @@ def main_cli():
         n_before = len(to_import)
         for ev in cal.walk("VEVENT"):
             try:
-                if not ev.get("dtstart"):
-                    raise ValueError("kein DTSTART")
-                if is_raw_nak(ev):
-                    ev = clean_event(ev)
-                    stats["raw"] += 1
-                    if ev is None:
-                        stats["filtered"] += 1
-                        continue
-                else:
-                    stats["as_is"] += 1
-                ensure_uid(ev)
-                if not args.include_future and archive._start_utc(ev) >= now:
+                if not ev.get("dtstart") or not ev.get("uid"):
+                    raise ValueError("kein DTSTART/UID")
+                if not parse.is_nak_event(ev):
+                    stats["fremd"] += 1
+                    continue
+                stats["nak"] += 1
+                if not args.include_future and store.to_utc_iso(ev.decoded("dtstart")) >= now:
                     stats["future"] += 1
                     continue
                 uid = str(ev["uid"])
@@ -111,13 +89,15 @@ def main_cli():
                 print(f"! {f.name}: Event übersprungen ({e})", file=sys.stderr)
         print(f"{f.name}: {len(to_import) - n_before} Events")
 
-    print(f"\nRoh-NAK bereinigt: {stats['raw']}, unverändert: {stats['as_is']}, durch Filter entfernt: {stats['filtered']}, "
+    print(f"\nNAK-Termine: {stats['nak']}, fremde übersprungen: {stats['fremd']}, "
           f"zukünftig übersprungen: {stats['future']}, Duplikate: {stats['dup']}, defekt: {stats['broken']}")
     if args.dry_run:
-        print(f"[dry-run] {len(to_import)} Events würden ins Archiv geschrieben.")
+        print(f"[dry-run] {len(to_import)} Events würden ins Archiv von {args.zenturie} geschrieben.")
         return
-    added, updated, skipped = archive.import_events(to_import, overwrite=args.overwrite)
-    print(f"Archiv ({archive.ARCHIVE_PATH}): {added} neu, {updated} aktualisiert, {skipped} bereits vorhanden.")
+    store.init()
+    store.ensure_zenturie(args.zenturie)
+    added, updated, skipped = store.import_events(args.zenturie, to_import, overwrite=args.overwrite)
+    print(f"Archiv ({store.ARCHIVE_PATH}): {added} neu, {updated} aktualisiert, {skipped} bereits vorhanden.")
 
 
 if __name__ == "__main__":

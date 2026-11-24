@@ -1,113 +1,127 @@
-from flask import Flask, Response
-import requests
+"""Öffentlicher NAK-Stundenplan: Auswahlseite, JSON-API und gefilterte Kalender-Abos.
+
+Web-Requests lesen nur aus SQLite. Die NAK wird ausschließlich vom Poller abgerufen (poller.py),
+deshalb kann kein Aufruf von außen Requests an die NAK auslösen.
+"""
+import hashlib
+import logging
 import os
 import re
-from datetime import date
-from icalendar import Calendar, Timezone
-from archive import merge_with_archive
 
-app = Flask(__name__)
+from flask import Flask, Response, abort, jsonify, request, send_from_directory
 
-STUNDENPLAN_BASE = "https://cis.nordakademie.de/fileadmin/Infos/Stundenplaene"
-ZENTURIE = os.environ.get("ZENTURIE", "A25a")
-# Startjahr aus der Zenturie (A25a -> 2025), überschreibbar
-START_JAHR = int(os.environ.get("START_JAHR", 2000 + int(re.search(r"\d{2}", ZENTURIE).group())))
+import poller
+import render
+import store
+
+logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
+log = logging.getLogger("nak-proxy")
+
+STATIC_DIR = os.path.abspath(os.getenv("STATIC_DIR", "frontend/build"))
+GRUPPE_RE = re.compile(r"^[A-Za-z0-9]{1,10}$")
+MAX_KEYS = 200
+# Zenturie und Filter des alten Einzel-Feeds /stundenplan.ics (bestehende Abos)
+LEGACY_ZENTURIE = store.LEGACY_ZENTURIE
+LEGACY_OHNE_PREFIX = "spanisch"
+
+app = Flask(__name__, static_folder=None)
+app.json.ensure_ascii = False
+app.json.sort_keys = False
+
+store.init()
+poller.start()
 
 
-def current_semester(today=None):
-    """Semester (1-basiert) seit Studienstart; Studium beginnt im August (Quartal III)."""
-    today = today or date.today()
-    return 2 * (today.year - START_JAHR) + (1 if today.month >= 7 else 0)
+@app.after_request
+def security_headers(resp):
+    resp.headers.setdefault("X-Content-Type-Options", "nosniff")
+    resp.headers.setdefault("Referrer-Policy", "no-referrer")
+    resp.headers.setdefault("X-Frame-Options", "DENY")
+    return resp
 
 
-def candidate_urls(today=None):
-    """Berechnetes Semester zuerst, dann Nachbarn als Fallback (Wechsel-Zeitraum)."""
-    sem = current_semester(today)
-    return [f"{STUNDENPLAN_BASE}/{ZENTURIE}_{n}.ics" for n in (sem, sem + 1, sem - 1) if n >= 1]
+@app.errorhandler(Exception)
+def server_error(e):
+    if hasattr(e, "code") and hasattr(e, "get_response"):  # HTTP-Fehler (404 usw.) durchreichen
+        return e
+    log.exception("Fehler bei %s", request.path)
+    return Response("Interner Fehler", status=500, mimetype="text/plain")
 
 
-def fetch_upstream():
-    """Erste erreichbare Kandidaten-URL; None, wenn keine antwortet."""
-    for url in candidate_urls():
-        try:
-            response = requests.get(url, timeout=15)
-        except requests.RequestException:
-            continue
-        if response.status_code == 200:
-            response.encoding = 'windows-1252'
-            return Calendar.from_ical(response.text.encode('utf-8'))
-    return None
+def _zenturie_or_404(code):
+    if not store.ZENTURIE_RE.match(code):
+        abort(404)
+    z = store.zenturie(code)
+    if z is None:
+        abort(404)
+    return z
 
-# --- HELFER FUNKTION ---
-def clean_event(event):
-    """
-    Nimmt ein Event entgegen, manipuliert es und gibt es zurück.
-    Gibt None zurück, wenn das Event gelöscht werden soll.
-    """
-    summary = str(event.get('summary', ''))
-    description = str(event.get('description', ''))
 
-    if "Spanisch" in summary:
-        return None
+def parse_key(key):
+    return bool(re.fullmatch(r"[A-Za-z0-9-]{1,60}", key))
 
-    # andere Englischkurse filtern
-    # if "Pirie" in description or "Bulloch" in description:
-    #     return None
-    
-    # # zweite Laborgruppe
-    # if "Gruppe 2" in description:
-    #     return None
 
-    if ',' in summary:
-        summary = summary.split(',', 1)[0].strip()
-    parts = summary.split(' ', 2)
-    if len(parts) >= 3:
-        cleaned_summary = parts[2].strip()
-    else:
-        cleaned_summary = summary.strip()
+def _split(param):
+    values = [v for v in request.args.get(param, "").split(",") if v]
+    if len(values) > MAX_KEYS:
+        abort(400, "Zu viele Werte")
+    return values
 
-    # Remove leading one-letter markers like "Z Zenturienbetreuung" -> "Zenturienbetreuung"
-    cleaned_summary = re.sub(r'^[A-Z]\s+(?=\S)', '', cleaned_summary)
 
-    # If description contains an explicit online note line, mark title as online.
-    has_online_note = re.search(r'^\s*Anmerkung:\s*.*\bonline\b.*$', description, flags=re.IGNORECASE | re.MULTILINE)
-    if has_online_note and not re.search(r'\bonline\b', cleaned_summary, flags=re.IGNORECASE):
-        cleaned_summary = f"{cleaned_summary} (online)"
+def _cached(resp, max_age):
+    resp.headers["Cache-Control"] = f"public, max-age={max_age}"
+    return resp
 
-    event['summary'] = cleaned_summary
 
-    return event
+# --- Kalender -------------------------------------------------------------
 
-@app.route('/stundenplan.ics')
-def get_stundenplan():
-    try:
-        cal = fetch_upstream()
-        new_cal = Calendar()
-        events = []
+def _ics_response(code, ohne, gruppen):
+    z = _zenturie_or_404(code)
+    # Unbekannte Schlüssel verwerfen: gleiche Wirkung = gleicher Cache-Eintrag und gleiches ETag,
+    # zufällige Parameter können so den Cache nicht verdrängen
+    keys = render.module_keys(code, z["version"])
+    ohne = frozenset(ohne) & keys
+    gruppen = tuple(sorted((k, g) for k, g in gruppen.items() if k in keys and k not in ohne))
+    etag = hashlib.sha256(repr((code, z["version"], sorted(ohne), gruppen)).encode()).hexdigest()[:32]
+    if request.if_none_match.contains(etag):
+        return _cached(Response(status=304, headers={"ETag": f'"{etag}"'}), 900)
+    body = render.render(code, z["version"], ohne, gruppen)
+    resp = Response(body, mimetype="text/calendar")
+    resp.headers["Content-Disposition"] = f'inline; filename="{code}.ics"'
+    resp.set_etag(etag)
+    return _cached(resp, 900)
 
-        if cal is not None:
-            for key, value in cal.items():
-                new_cal.add(key, value)
-            for component in cal.walk():
-                if component.name == "VTIMEZONE":
-                    new_cal.add_component(component)
-                elif component.name == "VEVENT":
-                    processed_event = clean_event(component)
-                    if processed_event:
-                        events.append(processed_event)
-        else:
-            # Upstream nicht erreichbar: nur Archiv ausliefern
-            new_cal.add('prodid', '-//calendar-proxy//EN')
-            new_cal.add('version', '2.0')
-            new_cal.add_component(Timezone.from_tzid('Europe/Berlin'))
 
-        for event in merge_with_archive(events):
-            new_cal.add_component(event)
+@app.get("/z/<code>.ics")
+def kalender(code):
+    """Abo-Feed. ?ohne=A205,spanisch-b1 blendet Module aus, ?gruppe=W213.2 wählt die Laborgruppe."""
+    ohne = [k for k in _split("ohne") if parse_key(k)]
+    gruppen = {}
+    for item in _split("gruppe"):
+        key, _, g = item.partition(".")
+        if parse_key(key) and GRUPPE_RE.match(g):
+            gruppen[key] = g
+    return _ics_response(code, ohne, gruppen)
 
-        return Response(new_cal.to_ical(), mimetype='text/calendar')
 
-    except Exception as e:
-        return Response(f"Server Error: {str(e)}", status=500)
+@app.get("/stundenplan.ics")
+def legacy_stundenplan():
+    """Alter Einzel-Feed (A25a ohne Spanisch). Bestehende Abos hängen an dieser URL."""
+    ohne = [m["key"] for m in store.list_module(LEGACY_ZENTURIE) if m["key"].startswith(LEGACY_OHNE_PREFIX)]
+    return _ics_response(LEGACY_ZENTURIE, ohne, {})
+
+
+# --- API für die Auswahlseite ----------------------------------------------
+
+@app.get("/api/zenturien")
+def api_zenturien():
+    return _cached(jsonify(store.list_zenturien(nur_mit_terminen=True)), 300)
+
+
+@app.get("/api/zenturien/<code>/module")
+def api_module(code):
+    _zenturie_or_404(code)
+    return _cached(jsonify(store.list_module(code)), 300)
 
 
 @app.get("/healthz")
@@ -115,7 +129,24 @@ def health():
     return "ok"
 
 
+# --- Frontend (statischer SvelteKit-Build) ---------------------------------
+
+@app.get("/")
+@app.get("/<path:path>")
+def frontend(path="index.html"):
+    if path.startswith(("api/", "z/")) or not os.path.isdir(STATIC_DIR):
+        abort(404)
+    if not os.path.isfile(os.path.join(STATIC_DIR, path)):
+        path = "index.html"
+    resp = send_from_directory(STATIC_DIR, path)
+    if path.startswith("_app/immutable/"):
+        resp.headers["Cache-Control"] = "public, max-age=31536000, immutable"
+    else:
+        resp.headers["Cache-Control"] = "public, max-age=300"
+    return resp
+
+
 if __name__ == "__main__":
-    port = int(os.environ.get('PORT', 5000))
-    debug = os.environ.get('FLASK_ENV') == 'dev'
-    app.run(debug=debug, port=port, host='0.0.0.0')
+    port = int(os.environ.get("PORT", 5000))
+    debug = os.environ.get("FLASK_ENV") == "dev"
+    app.run(debug=debug, port=port, host="0.0.0.0")
