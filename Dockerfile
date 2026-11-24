@@ -8,9 +8,13 @@ COPY frontend/ ./
 RUN npm run build
 
 # --- Python-Abhängigkeiten ----------------------------------------------------
+# uv als eigene Stage auf der Build-Plattform: COPY --from=<image> würde das Image für die
+# Zielplattform auflösen, und für linux/arm/v7 gibt es kein uv-Image
+FROM --platform=$BUILDPLATFORM ghcr.io/astral-sh/uv:0.13.9@sha256:d3b601f0c7b118bc1753febf7c41cc80981df678445e0254284eecf84db79a7d AS uv
+
 FROM --platform=$BUILDPLATFORM python:3.13-slim AS builder
 WORKDIR /app
-COPY --from=ghcr.io/astral-sh/uv:0.13.9@sha256:d3b601f0c7b118bc1753febf7c41cc80981df678445e0254284eecf84db79a7d /uv /bin/uv
+COPY --from=uv /uv /bin/uv
 # Genau die Versionen aus uv.lock, per Hash geprüft. Das Projekt selbst wird nicht installiert,
 # die Module liegen in /app.
 # Läuft auf der Build-Plattform: markupsafe und charset-normalizer bringen dabei C-Erweiterungen
