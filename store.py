@@ -9,15 +9,11 @@ import sqlite3
 import threading
 from datetime import datetime, timezone
 
-from icalendar import Event
-
 import parse
 
 log = logging.getLogger(__name__)
 
 ARCHIVE_PATH = os.getenv("ARCHIVE_PATH", "archive.db")
-# Zenturie, der die Einträge der alten Ein-Zenturien-Tabelle gehören
-LEGACY_ZENTURIE = os.getenv("LEGACY_ZENTURIE", "A25a")
 ZENTURIE_RE = re.compile(r"^[A-Z]\d{2}[a-z]$")
 
 SCHEMA = """
@@ -76,39 +72,12 @@ def connect():
 
 
 def init():
-    """Schema anlegen und ggf. die alte Ein-Zenturien-Tabelle migrieren."""
+    """Schema anlegen."""
     conn = connect()
     with conn:
-        cols = [r[1] for r in conn.execute("PRAGMA table_info(events)")]
-        if cols and "zenturie" not in cols:
-            log.info("Alte Archiv-Tabelle gefunden, migriere nach Zenturie %s", LEGACY_ZENTURIE)
-            conn.execute("ALTER TABLE events RENAME TO events_legacy")
         conn.executescript(SCHEMA)
-    if conn.execute("SELECT name FROM sqlite_master WHERE name='events_legacy'").fetchone():
-        _migrate_legacy(conn)
-
-
-def _migrate_legacy(conn):
-    """Übernimmt die alte Tabelle events(uid, dtstart, ical) einmalig. Die alte Tabelle bleibt als Backup."""
-    rows = conn.execute("SELECT ical FROM events_legacy").fetchall()
-    events, fremd = [], 0
-    for (blob,) in rows:
-        text = blob.decode("utf-8") if isinstance(blob, bytes) else blob
-        text = "\n".join(parse.repair_mojibake(line) for line in text.splitlines())
-        ev = Event.from_ical(text)
-        # Fremde Termine (z.B. früher importierte Bahn-Kalender) nicht in den öffentlichen Feed übernehmen
-        if parse.is_nak_event(ev):
-            events.append(ev)
-        else:
-            fremd += 1
-    if fremd:
-        log.info("Migration: %d Nicht-NAK-Termine bleiben nur in events_legacy_migriert", fremd)
-    ensure_zenturie(LEGACY_ZENTURIE)
-    added, _updated, skipped = import_events(LEGACY_ZENTURIE, events)
-    with conn:
-        # nur einmal migrieren, sonst würden später abgesagte Termine wieder auftauchen
-        conn.execute("ALTER TABLE events_legacy RENAME TO events_legacy_migriert")
-    log.info("Migration: %d übernommen, %d schon vorhanden", added, skipped)
+        # Backup-Tabelle der früheren Migration vom alten Ein-Zenturien-Archiv, wird nicht mehr gebraucht
+        conn.execute("DROP TABLE IF EXISTS events_legacy_migriert")
 
 
 # --- Hilfen ---------------------------------------------------------------

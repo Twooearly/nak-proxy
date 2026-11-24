@@ -37,8 +37,7 @@ export default defineConfig({
 	server: {
 		proxy: {
 			'/api': backend,
-			'/z': backend,
-			'/stundenplan.ics': backend
+			'/z': backend
 		}
 	}
 });
