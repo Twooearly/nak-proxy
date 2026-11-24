@@ -1,0 +1,42 @@
+# Wöchentliche Updates, je Ökosystem in einem gemeinsamen PR. Sicherheitsupdates kommen
+# unabhängig davon sofort, wenn sie in den Repo-Einstellungen eingeschaltet sind.
+version: 2
+updates:
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+    groups:
+      actions:
+        patterns: ["*"]
+
+  - package-ecosystem: uv
+    directory: /
+    schedule:
+      interval: weekly
+    groups:
+      python:
+        patterns: ["*"]
+
+  - package-ecosystem: npm
+    directory: /frontend
+    schedule:
+      interval: weekly
+    groups:
+      frontend:
+        patterns: ["*"]
+
+  # Basis-Images und uv im Dockerfile. Python bleibt bei 3.13 und Node bei 26,
+  # passend zur CI; Wechsel der Hauptversion macht man von Hand
+  - package-ecosystem: docker
+    directory: /
+    schedule:
+      interval: weekly
+    ignore:
+      - dependency-name: python
+        update-types: ["version-update:semver-major", "version-update:semver-minor"]
+      - dependency-name: node
+        update-types: ["version-update:semver-major"]
+    groups:
+      docker:
+        patterns: ["*"]

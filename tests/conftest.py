@@ -48,7 +48,7 @@ def db(tmp_path, monkeypatch):
     """Frische DB pro Test, Caches geleert."""
     monkeypatch.setattr(store, "ARCHIVE_PATH", str(tmp_path / "archive.db"))
     render.render.cache_clear()
-    render.module_keys.cache_clear()
+    render._bausteine.cache_clear()
     store.init()
     yield tmp_path / "archive.db"
     conn = getattr(store._local, "conn", None)

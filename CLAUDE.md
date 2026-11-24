@@ -33,13 +33,14 @@ CI (`.github/workflows/ci.yml`) runs `test-backend` (pytest on Python 3.13) and 
   - `display_title()`.
   Titles are computed at render time, so rule changes apply to archived events too.
 - **`store.py`**: Tables `zenturien` (with `version`, bumped on every change; used as cache key/ETag), `quellen` (per upstream URL), and `events` (PK `zenturie, uid`; raw event without DTSTAMP). `sync_source()` upserts, then deletes only *future* events missing from the file *within its sync window*, and never deletes on an empty file. `init()` creates the schema (and drops the leftover `events_legacy_migriert` table).
-- **`render.py`**: `lru_cache` over `(zenturie, version, ohne, gruppen)`.
+- **`render.py`**: `_bausteine()` parses and serializes every event once per `(zenturie, version)`; filtering only joins the finished bytes, so random filter combinations stay cheap. `render()` keeps an `lru_cache` over `(zenturie, version, ohne, gruppen)` on top.
 - **`main.py`**: Routes, input validation (Zenturie regex + must exist in DB), serving the static frontend (SPA fallback, but never for `api/`, `z/` or `*.ics`).
 - **`frontend/`**: SvelteKit 3 (adapter-static, runes, CSP hashes), shadcn-svelte (`vega` style) + Tailwind 4. Imports use `#lib/...` with explicit `.js`/`index.js` paths. The selection is mirrored into the URL hash (`#/z/A25a.ics?ohne=…`).
 
 ## Gotchas
 
-- When adding a Python module, add it to `py-modules` in `pyproject.toml` and to both `COPY` lines in the `Dockerfile`.
+- When adding a Python module, add it to `py-modules` in `pyproject.toml` and to the runtime `COPY` line in the `Dockerfile`.
+- The Docker image installs dependencies only from `uv.lock` (hash-checked via `uv export`), not from the ranges in `pyproject.toml`. After changing dependencies run `uv lock`.
 - Gunicorn runs **1 worker with 8 threads** so there is exactly one poller; SQLite runs in WAL mode.
 - Started as root, the entrypoint chowns `/data` to UID 1000 and drops root. With `user:` set in compose it skips that and runs directly as that user; `/data` must then be writable by it (SQLite creates `-wal`/`-shm` files next to the DB).
 - The local `compose.yaml` uses the named volume `calendar-proxy_calendar-data`. A deployment may use a bind mount instead.
