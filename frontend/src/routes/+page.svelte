@@ -7,6 +7,7 @@
 	import ChevronDownIcon from '@lucide/svelte/icons/chevron-down';
 
 	import { aboPfad, ladeModule, ladeZenturien, type Modul, type Zenturie } from '#lib/api.js';
+	import Logo from '#lib/components/Logo.svelte';
 	import ModulZeile from '#lib/components/ModulZeile.svelte';
 	import * as Alert from '#lib/components/ui/alert/index.js';
 	import { Button } from '#lib/components/ui/button/index.js';
@@ -152,7 +153,10 @@
 
 <main class="mx-auto flex max-w-2xl flex-col gap-6 px-4 py-10">
 	<header class="flex flex-col gap-2">
-		<h1 class="text-2xl font-semibold tracking-tight">NAK Stundenplan-Abo</h1>
+		<h1 class="flex items-center gap-2.5 text-2xl font-semibold tracking-tight">
+			<Logo class="size-8 shrink-0" />
+			NAK Stundenplan-Abo
+		</h1>
 		<p class="text-muted-foreground text-sm">
 			Wähle deine Zenturie und die Module, die in deinem Kalender erscheinen sollen. Du bekommst
 			einen Abo-Link, der sich automatisch aktualisiert. Vergangene Termine bleiben erhalten,
