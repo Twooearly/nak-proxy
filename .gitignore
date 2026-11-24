@@ -55,3 +55,6 @@ htmlcov/
 
 # Lock files (optional - uncomment if using uv)
 # uv.lock
+
+# SQLite-Archiv (lokal)
+archive.db*

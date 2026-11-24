@@ -1,0 +1,18 @@
+services:
+  nak-proxy:
+    build: .
+    ports:
+      - "8000:8000"
+    environment:
+      - FLASK_ENV=production
+      - PORT=8000
+      - ZENTURIE=A25a
+      - ARCHIVE_PATH=/data/archive.db
+    volumes:
+      - calendar-data:/data
+    restart: unless-stopped
+
+volumes:
+  calendar-data:
+    # fester Name: bleibt gleich, auch wenn das Verzeichnis umbenannt wird (Archiv!)
+    name: calendar-proxy_calendar-data

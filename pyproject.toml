@@ -1,7 +1,7 @@
 [project]
-name = "stundenplan-proxy"
+name = "nak-proxy"
 version = "0.1.0"
-description = "Add your description here"
+description = "Flask proxy for the Nordakademie timetable"
 readme = "README.md"
 requires-python = ">=3.10"
 dependencies = [
@@ -10,3 +10,10 @@ dependencies = [
     "requests>=2.32.5",
     "gunicorn>=22.0.0",
 ]
+
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools]
+py-modules = ["main", "archive", "import_ics"]

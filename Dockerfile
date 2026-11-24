@@ -9,7 +9,7 @@ ENV PIP_NO_CACHE_DIR=1 \
     PIP_DISABLE_PIP_VERSION_CHECK=1 \
     MARKUPSAFE_NO_SPEEDUPS=1
 
-COPY pyproject.toml README.md main.py ./
+COPY pyproject.toml README.md main.py archive.py import_ics.py ./
 
 # Install Python dependencies
 RUN pip install --user .
@@ -25,10 +25,15 @@ COPY --from=builder /root/.local /root/.local
 # Set PATH
 ENV PATH=/root/.local/bin:$PATH
 ENV PYTHONUNBUFFERED=1
+ENV ARCHIVE_PATH=/data/archive.db
 
-COPY main.py .
+COPY main.py archive.py import_ics.py ./
 
+VOLUME /data
 EXPOSE 8000
 
-# Gunicorn mit 4 Workers (angepasst für kleine Container)
+HEALTHCHECK --interval=60s --timeout=5s --start-period=15s --retries=3 \
+    CMD ["python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/healthz', timeout=4)"]
+
+# Gunicorn mit 2 Workers (angepasst für kleine Container)
 CMD ["gunicorn", "--bind", "0.0.0.0:8000", "--workers", "2", "--timeout", "30", "main:app"]
