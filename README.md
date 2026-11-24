@@ -31,7 +31,6 @@ Vergangene Termine bleiben im Abo erhalten, auch wenn die NAK die alte Semesterd
 | `  ?gruppe=W213.2` | bei Modul W213 nur Laborgruppe 2 |
 | `GET /api/zenturien` | bekannte Zenturien mit Studiengang und Jahrgang |
 | `GET /api/zenturien/<Zenturie>/module` | Module mit Terminanzahl und Laborgruppen |
-| `GET /stundenplan.ics` | alter Feed (A25a ohne Spanisch) für bestehende Abos |
 | `GET /healthz` | Healthcheck |
 
 ## Selbst betreiben
@@ -56,7 +55,6 @@ Gunicorn läuft mit einem Worker und 8 Threads, damit es genau einen Poller gibt
 | `UPSTREAM_PAUSE` | `0.5` | Sekunden zwischen zwei Requests an die NAK |
 | `UPSTREAM_USER_AGENT` | `nak-stundenplan-proxy` | User-Agent für Requests an die NAK |
 | `POLLER` | `1` | `0` schaltet den Poller ab (z. B. für Tests) |
-| `LEGACY_ZENTURIE` | `A25a` | Zenturie für `/stundenplan.ics` und die Migration der alten DB |
 | `STATIC_DIR` | `frontend/build` | statischer Frontend-Build |
 
 ### Alte Kalender importieren
