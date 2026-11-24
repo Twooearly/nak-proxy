@@ -1,5 +1,4 @@
-"""Archiv-Logik (store.py): Abgleich, Absagen, Import und Migration der alten Tabelle."""
-import sqlite3
+"""Archiv-Logik (store.py): Abgleich, Absagen, Import und Aufräumen der alten Migrations-Tabelle."""
 
 import store
 from conftest import fenster, make_event, tage
@@ -141,41 +140,14 @@ def test_list_zenturien_nur_mit_terminen(db):
     assert [z["code"] for z in store.list_zenturien(nur_mit_terminen=True)] == [Z]
 
 
-# --- Migration der alten Ein-Zenturien-Tabelle ------------------------------------
+# --- Aufräumen der alten Migrations-Tabelle --------------------------------------
 
-def _alte_db(pfad, events):
-    """DB im Format des alten archive.py: events(uid, dtstart, ical), bereinigte Titel."""
-    conn = sqlite3.connect(pfad)
-    conn.execute("CREATE TABLE events (uid TEXT PRIMARY KEY, dtstart TEXT NOT NULL, ical BLOB NOT NULL)")
-    for ev in events:
-        conn.execute("INSERT INTO events VALUES (?, ?, ?)",
-                     (str(ev["uid"]), store.to_utc_iso(ev.decoded("dtstart")), ev.to_ical()))
-    conn.commit()
-    conn.close()
-
-
-def test_migration(tmp_path, monkeypatch):
-    pfad = tmp_path / "alt.db"
-    alt = make_event("alt", tage(-30), veranstaltung="V S011 Digitale GeschÃ¤ftsprozesse")
-    alt["summary"] = "Digitale GeschÃ¤ftsprozesse"  # vom alten Proxy schon gekürzt
-    bahn = make_event("bahn", tage(-3))
-    bahn["description"] = "ICE 123 nach Hamburg"
-    zukunft = make_event("zukunft", tage(10))
-    _alte_db(pfad, [alt, bahn, zukunft])
-
-    monkeypatch.setattr(store, "ARCHIVE_PATH", str(pfad))
-    store.init()
+def test_init_entfernt_alte_migrationstabelle(db):
     conn = store.connect()
-    tabellen = {r[0] for r in conn.execute("SELECT name FROM sqlite_master WHERE type='table'")}
-    assert "events_legacy_migriert" in tabellen and "events_legacy" not in tabellen
-    assert uids() == {"alt", "zukunft"}  # fremder Termin bleibt draußen
-    assert conn.execute("SELECT module_key, titel FROM events WHERE uid='alt'").fetchone() == (
-        "S011", "Digitale Geschäftsprozesse")
-    assert conn.execute("SELECT count(*) FROM events_legacy_migriert").fetchone()[0] == 3
-
-    # Poller sagt den zukünftigen Termin ab; ein Neustart darf ihn nicht zurückholen
-    store.sync_source(Z, "url", [make_event("neu", tage(11))], fenster(-30, 30))
+    conn.execute("CREATE TABLE events_legacy_migriert (uid TEXT, dtstart TEXT, ical BLOB)")
+    conn.commit()
     store.init()
-    assert uids() == {"alt", "neu"}
-    conn.close()
+    tabellen = {r[0] for r in conn.execute("SELECT name FROM sqlite_master WHERE type='table'")}
+    assert "events_legacy_migriert" not in tabellen
+    assert {"zenturien", "quellen", "events", "meta"} <= tabellen
     store._local.conn = None

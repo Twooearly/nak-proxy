@@ -106,13 +106,6 @@ def test_ungueltige_anfragen(client, url, status):
     assert client.get(url).status_code == status
 
 
-def test_legacy_stundenplan_ohne_spanisch(client):
-    resp = client.get("/stundenplan.ics")
-    assert resp.status_code == 200
-    assert titel(resp) == ["Algorithmen und Datenstrukturen", "Algorithmen und Datenstrukturen",
-                           "Datenbanksysteme (online)"]
-
-
 def test_fehler_verraten_keine_details(client, monkeypatch):
     def kaputt(*a, **k):
         raise RuntimeError("geheimer Pfad /data/archive.db")
@@ -143,3 +136,4 @@ def test_frontend(client, tmp_path, monkeypatch):
     for url in ("/../geheim.txt", "/..%2fgeheim.txt", "/_app/../../geheim.txt"):
         assert b"geheim" not in client.get(url).data
     assert client.get("/api/gibtsnicht").status_code == 404
+    assert client.get("/stundenplan.ics").status_code == 404  # alter Einzel-Feed, kein SPA-Fallback

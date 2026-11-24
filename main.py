@@ -20,9 +20,6 @@ log = logging.getLogger("nak-proxy")
 STATIC_DIR = os.path.abspath(os.getenv("STATIC_DIR", "frontend/build"))
 GRUPPE_RE = re.compile(r"^[A-Za-z0-9]{1,10}$")
 MAX_KEYS = 200
-# Zenturie und Filter des alten Einzel-Feeds /stundenplan.ics (bestehende Abos)
-LEGACY_ZENTURIE = store.LEGACY_ZENTURIE
-LEGACY_OHNE_PREFIX = "spanisch"
 
 app = Flask(__name__, static_folder=None)
 app.json.ensure_ascii = False
@@ -104,13 +101,6 @@ def kalender(code):
     return _ics_response(code, ohne, gruppen)
 
 
-@app.get("/stundenplan.ics")
-def legacy_stundenplan():
-    """Alter Einzel-Feed (A25a ohne Spanisch). Bestehende Abos hängen an dieser URL."""
-    ohne = [m["key"] for m in store.list_module(LEGACY_ZENTURIE) if m["key"].startswith(LEGACY_OHNE_PREFIX)]
-    return _ics_response(LEGACY_ZENTURIE, ohne, {})
-
-
 # --- API für die Auswahlseite ----------------------------------------------
 
 @app.get("/api/zenturien")
@@ -134,7 +124,8 @@ def health():
 @app.get("/")
 @app.get("/<path:path>")
 def frontend(path="index.html"):
-    if path.startswith(("api/", "z/")) or not os.path.isdir(STATIC_DIR):
+    # .ics nie mit der HTML-Seite beantworten, sonst bekommen veraltete Abos 200 statt 404
+    if path.startswith(("api/", "z/")) or path.endswith(".ics") or not os.path.isdir(STATIC_DIR):
         abort(404)
     if not os.path.isfile(os.path.join(STATIC_DIR, path)):
         path = "index.html"
