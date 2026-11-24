@@ -16,6 +16,9 @@ BERLIN_TZ = Timezone.from_ical(
     "TZOFFSETFROM:+0200\r\nTZOFFSETTO:+0100\r\nEND:STANDARD\r\nEND:VTIMEZONE\r\n"
 )
 
+_ENDE = b"END:VCALENDAR\r\n"
+
+
 def _wanted(module_key, gruppe, ohne, gruppen):
     if module_key in ohne:
         return False
@@ -24,18 +27,9 @@ def _wanted(module_key, gruppe, ohne, gruppen):
     return not (want and gruppe and gruppe != want)
 
 
-@lru_cache(maxsize=256)
-def module_keys(code, version):
-    """Alle Modul-Schlüssel einer Zenturie (zum Kanonisieren der Filter)."""
-    return frozenset(k for k, *_ in store.events_for(code))
-
-
-@lru_cache(maxsize=512)
-def render(code, version, ohne: frozenset, gruppen: tuple):
-    """ICS-Bytes. `version` ist Teil des Cache-Keys und ändert sich bei jeder Datenänderung."""
+def _kopf(code):
+    """Kalender-Eigenschaften und Zeitzone, ohne abschließendes END:VCALENDAR."""
     z = store.zenturie(code)
-    gruppen = dict(gruppen)
-
     cal = Calendar()
     cal.add("prodid", "-//nak-stundenplan-proxy//DE")
     cal.add("version", "2.0")
@@ -49,15 +43,45 @@ def render(code, version, ohne: frozenset, gruppen: tuple):
     cal.add("refresh-interval", timedelta(hours=1), parameters={"VALUE": "DURATION"})
     cal["X-PUBLISHED-TTL"] = vDuration(timedelta(hours=1))
     cal.add_component(BERLIN_TZ)
+    return cal.to_ical().removesuffix(_ENDE)
 
-    for module_key, gruppe, ical, updated_at in store.events_for(code):
-        if not _wanted(module_key, gruppe, ohne, gruppen):
-            continue
-        ev = Event.from_ical(ical)
-        title = parse.display_title(ev)
-        ev.pop("summary", None)
-        ev.add("summary", title)
-        ev.pop("dtstamp", None)
-        ev.add("dtstamp", store.parse_iso(updated_at))
-        cal.add_component(ev)
-    return cal.to_ical()
+
+def _termin(ical, updated_at):
+    """Ein archivierter Termin als fertige VEVENT-Bytes, mit Anzeige-Titel und DTSTAMP."""
+    ev = Event.from_ical(ical)
+    title = parse.display_title(ev)
+    ev.pop("summary", None)
+    ev.add("summary", title)
+    ev.pop("dtstamp", None)
+    ev.add("dtstamp", store.parse_iso(updated_at))
+    return ev.to_ical()
+
+
+@lru_cache(maxsize=64)
+def _bausteine(code, version):
+    """Kopf und alle Termine einer Zenturie, einmal pro Datenstand fertig serialisiert.
+
+    Das Parsen und Serialisieren ist der teure Teil. So kostet jede weitere Filter-Kombination
+    nur noch das Zusammensetzen, und zufällige Kombinationen können den Server nicht auslasten.
+    """
+    termine = tuple(
+        (module_key, gruppe, _termin(ical, updated_at))
+        for module_key, gruppe, ical, updated_at in store.events_for(code)
+    )
+    return _kopf(code), termine
+
+
+def module_keys(code, version):
+    """Alle Modul-Schlüssel einer Zenturie (zum Kanonisieren der Filter)."""
+    return frozenset(k for k, _g, _b in _bausteine(code, version)[1])
+
+
+@lru_cache(maxsize=128)
+def render(code, version, ohne: frozenset, gruppen: tuple):
+    """ICS-Bytes. `version` ist Teil des Cache-Keys und ändert sich bei jeder Datenänderung."""
+    kopf, termine = _bausteine(code, version)
+    gruppen = dict(gruppen)
+    teile = [kopf]
+    teile += (b for k, g, b in termine if _wanted(k, g, ohne, gruppen))
+    teile.append(_ENDE)
+    return b"".join(teile)

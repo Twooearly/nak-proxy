@@ -3,6 +3,7 @@ import pytest
 from icalendar import Calendar
 
 import main
+import render
 import store
 from conftest import fenster, make_event, tage
 
@@ -93,6 +94,17 @@ def test_etag_304_und_neue_version(client):
     resp2 = client.get("/z/A25a.ics", headers={"If-None-Match": etag})
     assert resp2.status_code == 200
     assert len(titel(resp2)) == 6
+
+
+def test_filter_kombinationen_parsen_nicht_neu(client, monkeypatch):
+    """Nur der erste Abruf pro Datenstand parst die Termine, Filter setzen nur noch zusammen."""
+    client.get("/z/A25a.ics")
+    aufrufe = []
+    original = render.Event.from_ical
+    monkeypatch.setattr(render.Event, "from_ical", lambda *a, **k: aufrufe.append(1) or original(*a, **k))
+    for ohne in ("A205", "A249", "spanisch-b1", "A205,A249", "A249,spanisch-a1-3"):
+        assert client.get(f"/z/A25a.ics?ohne={ohne}").status_code == 200
+    assert aufrufe == []
 
 
 @pytest.mark.parametrize("url, status", [
