@@ -21,7 +21,7 @@ uv run pytest                                  # backend tests (offline, temp DB
 
 Tests live in `tests/` (pytest, fully offline). `conftest.py` provides the `db` fixture (fresh SQLite per test, caches cleared) and `make_event()`, which builds events in the NAK sked.de format. Upstream HTTP is faked via `FakeSession` in `test_upstream.py`. Add or adjust tests with every behaviour change, especially in `store.sync_source` (archive and cancellation logic). There is no linter. Local Docker builds need buildx (`docker buildx build --load -t nak-proxy .`).
 
-CI (`.github/workflows/ci.yml`) runs `test-backend` (pytest on Python 3.13) and `test-frontend` (`npm run check` + build) on PRs and on pushes to `main`/tags. The `docker` job (multi-arch build + push to GHCR) needs both and runs only for `main`, `v*` tags and manual dispatch, so red tests never reach the server.
+CI (`.github/workflows/ci.yml`) runs `test-backend` (pytest on Python 3.13) and `test-frontend` (`npm run check` + build) on PRs and on pushes to `main`/tags. The `docker` job (multi-arch build + push to GHCR) needs both and runs only for `main`, `v*` tags and manual dispatch, so red tests never reach the published image.
 
 ## Architecture
 
@@ -47,3 +47,4 @@ CI (`.github/workflows/ci.yml`) runs `test-backend` (pytest on Python 3.13) and 
 - Feeds are public: never import non-NAK events into the archive.
 - `*.ics` is gitignored; do not commit sample feeds.
 - Docker uses Python 3.13 and Node 26 (the lockfile is from npm 11). `.python-version` is 3.14.
+- The repo is public. Server and deployment details live in the gitignored `CLAUDE.local.md`; never put hostnames, server paths or UIDs into tracked files, commit messages or PR descriptions.

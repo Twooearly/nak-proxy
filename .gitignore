@@ -63,3 +63,6 @@ frontend/.svelte-kit/
 
 # Poller-Lock
 .poller.lock
+
+# Lokale Claude-Notizen (Server-Details)
+CLAUDE.local.md
