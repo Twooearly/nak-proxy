@@ -39,7 +39,8 @@ CI (`.github/workflows/ci.yml`) runs `test-backend` (pytest on Python 3.13) and 
 
 ## Gotchas
 
-- When adding a Python module, add it to `py-modules` in `pyproject.toml` and to both `COPY` lines in the `Dockerfile`.
+- When adding a Python module, add it to `py-modules` in `pyproject.toml` and to the runtime `COPY` line in the `Dockerfile`.
+- The Docker image installs dependencies only from `uv.lock` (hash-checked via `uv export`), not from the ranges in `pyproject.toml`. After changing dependencies run `uv lock`.
 - Gunicorn runs **1 worker with 8 threads** so there is exactly one poller; SQLite runs in WAL mode.
 - Started as root, the entrypoint chowns `/data` to UID 1000 and drops root. With `user:` set in compose it skips that and runs directly as that user; `/data` must then be writable by it (SQLite creates `-wal`/`-shm` files next to the DB).
 - The local `compose.yaml` uses the named volume `calendar-proxy_calendar-data`. A deployment may use a bind mount instead.

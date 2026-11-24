@@ -10,13 +10,16 @@ RUN npm run build
 # --- Python-Abhängigkeiten ----------------------------------------------------
 FROM --platform=$BUILDPLATFORM python:3.13-slim AS builder
 WORKDIR /app
-# Abhängigkeiten sind reines Python; MarkupSafe ohne C-Erweiterung,
-# damit die kopierten site-packages architekturunabhängig bleiben
+COPY --from=ghcr.io/astral-sh/uv:0.13.9@sha256:d3b601f0c7b118bc1753febf7c41cc80981df678445e0254284eecf84db79a7d /uv /bin/uv
+# Genau die Versionen aus uv.lock, per Hash geprüft. Das Projekt selbst wird nicht installiert,
+# die Module liegen in /app.
+# Läuft auf der Build-Plattform: markupsafe und charset-normalizer bringen dabei C-Erweiterungen
+# für die falsche Architektur mit. Beide fallen dann auf ihre reine Python-Version zurück.
 ENV PIP_NO_CACHE_DIR=1 \
-    PIP_DISABLE_PIP_VERSION_CHECK=1 \
-    MARKUPSAFE_NO_SPEEDUPS=1
-COPY pyproject.toml README.md main.py parse.py store.py upstream.py poller.py render.py import_ics.py ./
-RUN pip install --prefix=/install .
+    PIP_DISABLE_PIP_VERSION_CHECK=1
+COPY pyproject.toml uv.lock ./
+RUN uv export --frozen --no-dev --no-emit-project --format requirements-txt -o requirements.txt \
+    && pip install --prefix=/install --require-hashes --no-deps -r requirements.txt
 
 # --- Laufzeit -------------------------------------------------------------------
 FROM python:3.13-slim AS runtime
