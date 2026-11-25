@@ -22,6 +22,10 @@ updates:
     directory: /frontend
     schedule:
       interval: weekly
+    ignore:
+      # svelte-check 4.7 erlaubt nur TypeScript bis 6; wieder freigeben, sobald es TS 7 unterstützt
+      - dependency-name: typescript
+        update-types: ["version-update:semver-major"]
     groups:
       frontend:
         patterns: ["*"]
